@@ -1,0 +1,15 @@
+A Brief History of Mars Exploration
+
+Mars has been a target of robotic exploration for more than sixty years, and its story is one of spectacular failures punctuated by transformative successes. Roughly half of all missions sent to the red planet have failed, a record that earned Mars a reputation as the graveyard of spacecraft.
+
+The first successful flyby was NASA's Mariner 4 in 1965, which returned twenty-one grainy photographs of a cratered, moonlike surface and shattered lingering hopes of a lush, canal-crossed world. Mariner 9 followed in 1971, becoming the first spacecraft to orbit another planet. It arrived during a global dust storm and had to wait weeks for the atmosphere to clear before mapping volcanoes, canyons, and dry riverbeds — the first evidence that liquid water once flowed on Mars.
+
+The Viking program landed two spacecraft on the surface in 1976. Each carried a suite of biology experiments designed to detect metabolic activity in the soil. The results were ambiguous and are still debated, but Viking established that the modern surface is cold, dry, and bathed in ultraviolet radiation — hostile to life as we know it.
+
+After a two-decade lull, Mars Pathfinder arrived in 1997 with Sojourner, a microwave-oven-sized rover that captured public imagination. The twin rovers Spirit and Opportunity followed in 2004, designed for ninety-day missions. Spirit survived six years; Opportunity drove more than forty-five kilometres over fourteen years before a planet-wide dust storm ended its mission in 2018.
+
+Curiosity, a car-sized nuclear-powered rover, landed in Gale Crater in 2012 using a novel sky-crane manoeuvre. It confirmed that the crater once held a lake with water chemically suitable for microbial life. Perseverance, its successor, landed in Jezero Crater in 2021, carrying the Ingenuity helicopter — the first aircraft to achieve powered flight on another planet. Perseverance is caching rock samples in sealed tubes for a future sample-return campaign.
+
+Mars exploration is no longer an American monopoly. The European Space Agency's Mars Express has orbited since 2003. India's Mangalyaan reached orbit in 2014 on its first attempt. China's Tianwen-1 mission delivered the Zhurong rover in 2021, making China the second nation to operate a rover on Mars. The United Arab Emirates' Hope orbiter arrived the same year to study the Martian atmosphere.
+
+The next chapter is sample return and, eventually, human landings. Bringing Martian rock back to terrestrial laboratories would allow analyses far beyond what any rover can perform, including the search for fossil biosignatures in ancient lakebed sediments.
