@@ -18,6 +18,15 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+/// Summary of a stored document, as reported by `recent_documents`.
+#[derive(Debug)]
+pub struct StoredDocument {
+    pub source_path: String,
+    pub chunk_count: usize,
+    /// When the document was (last) added, in the machine's local time zone.
+    pub added_at: String,
+}
+
 /// Storage backend for document embeddings. The default implementation is
 /// SQLite; alternative backends (Qdrant, pgvector, ...) only need to
 /// implement this trait.
@@ -32,6 +41,12 @@ pub trait VectorStore {
     /// Returns up to `top_k` stored chunks most similar to `query` by cosine
     /// similarity, best match first. Empty if the store has no chunks.
     fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchResult>>;
+
+    /// Returns the number of stored documents.
+    fn document_count(&self) -> Result<usize>;
+
+    /// Returns up to `limit` documents, most recently added first.
+    fn recent_documents(&self, limit: usize) -> Result<Vec<StoredDocument>>;
 }
 
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

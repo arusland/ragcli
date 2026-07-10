@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 
-use super::{EmbeddedChunk, SearchResult, VectorStore, cosine_similarity};
+use super::{EmbeddedChunk, SearchResult, StoredDocument, VectorStore, cosine_similarity};
 
 pub struct SqliteVectorStore {
     conn: Connection,
@@ -137,6 +137,38 @@ impl VectorStore for SqliteVectorStore {
         results.truncate(top_k);
         Ok(results)
     }
+
+    fn document_count(&self) -> Result<usize> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM documents", [], |row| row.get(0))
+            .context("failed to count documents")?;
+        Ok(count as usize)
+    }
+
+    fn recent_documents(&self, limit: usize) -> Result<Vec<StoredDocument>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id)
+                 FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+                 GROUP BY d.id
+                 ORDER BY d.added_at DESC, d.id DESC
+                 LIMIT ?1",
+            )
+            .context("failed to query recent documents")?;
+
+        let docs = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(StoredDocument {
+                    source_path: row.get(0)?,
+                    added_at: row.get(1)?,
+                    chunk_count: row.get::<_, i64>(2)? as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(docs)
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +299,58 @@ mod tests {
 
         let err = store.search(&[1.0, 0.0], 5).unwrap_err();
         assert!(err.to_string().contains("dimension"));
+    }
+
+    #[test]
+    fn document_count_reflects_stored_documents() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        assert_eq!(store.document_count().unwrap(), 0);
+
+        store.add_document("a.txt", &sample_chunks()).unwrap();
+        store.add_document("b.txt", &sample_chunks()).unwrap();
+        // re-adding must not double-count
+        store.add_document("a.txt", &sample_chunks()).unwrap();
+        assert_eq!(store.document_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn recent_documents_orders_newest_first_and_limits() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            store.add_document(name, &sample_chunks()).unwrap();
+        }
+        // in-memory inserts land in the same second, so set distinct timestamps
+        for (name, ts) in [
+            ("a.txt", "2026-01-01 10:00:00"),
+            ("b.txt", "2026-01-03 10:00:00"),
+            ("c.txt", "2026-01-02 10:00:00"),
+        ] {
+            store
+                .conn
+                .execute(
+                    "UPDATE documents SET added_at = ?1 WHERE source_path = ?2",
+                    params![ts, name],
+                )
+                .unwrap();
+        }
+
+        let recent = store.recent_documents(2).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].source_path, "b.txt");
+        // added_at is reported in local time, whatever zone the test runs in
+        let expected: String = store
+            .conn
+            .query_row(
+                "SELECT datetime('2026-01-03 10:00:00', 'localtime')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(recent[0].added_at, expected);
+        assert_eq!(recent[0].chunk_count, 2);
+        assert_eq!(recent[1].source_path, "c.txt");
     }
 
     #[test]

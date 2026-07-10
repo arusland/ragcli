@@ -35,7 +35,19 @@ cargo run -- ask "What do my notes say about brewing?"
 #
 # Sources:
 # - .\notes.txt
+
+# Show the configured models and what the database contains
+cargo run -- status
+# Database:        rag.db
+# Embedding model: nomic-embed-text
+# Chat model:      llama3.2
+# Documents:       1
+#
+# Recent documents:
+#   2026-07-10 14:03:12  .\notes.txt (3 chunk(s))
 ```
+
+`status` lists up to 5 most recently added documents (times shown in the local time zone) and does not need `OLLAMA_URL` to be set.
 
 Options:
 

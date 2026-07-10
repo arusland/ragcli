@@ -52,14 +52,41 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         top_k: usize,
     },
+    /// Show the configured models and what the database contains
+    Status,
 }
+
+const RECENT_DOCUMENTS: usize = 5;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Add { path } => add_document(&cli.db, &path, cli.verbose),
         Command::Ask { question, top_k } => ask_question(&cli.db, &question, top_k, cli.verbose),
+        Command::Status => show_status(&cli.db),
     }
+}
+
+fn show_status(db_path: &PathBuf) -> Result<()> {
+    let mut store = SqliteVectorStore::open(db_path)?;
+    store.init()?;
+
+    println!("Database:        {}", db_path.display());
+    println!("Embedding model: {}", config::embedding_model_from_env());
+    println!("Chat model:      {}", config::chat_model_from_env());
+    println!("Documents:       {}", store.document_count()?);
+
+    let recent = store.recent_documents(RECENT_DOCUMENTS)?;
+    if !recent.is_empty() {
+        println!("\nRecent documents:");
+        for doc in recent {
+            println!(
+                "  {}  {} ({} chunk(s))",
+                doc.added_at, doc.source_path, doc.chunk_count
+            );
+        }
+    }
+    Ok(())
 }
 
 fn add_document(db_path: &PathBuf, doc_path: &PathBuf, verbose: bool) -> Result<()> {
