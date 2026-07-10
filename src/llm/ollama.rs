@@ -109,8 +109,8 @@ impl ChatProvider for OllamaChat {
                 .unwrap_or_else(|_| body.clone());
             eprintln!("Response from {url}:\n{pretty}");
         }
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .context("failed to parse Ollama /api/chat response")?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&body).context("failed to parse Ollama /api/chat response")?;
         Ok(parsed.message.content)
     }
 }

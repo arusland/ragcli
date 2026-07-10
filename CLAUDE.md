@@ -40,6 +40,7 @@ The codebase is built around four traits, each in its module's `mod.rs`, with im
 
 ## Workflow
 
+- Before running tests, run `cargo fmt` and `cargo clippy` and fix any warnings.
 - After each change, generate a short one-line commit message describing it (e.g. `fix: handle empty chunks`). Do not commit unless explicitly asked.
 
 ## Conventions

@@ -3,7 +3,10 @@
 /// paragraph boundary, then at a line break, then at whitespace.
 pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     assert!(chunk_size > 0, "chunk_size must be positive");
-    assert!(overlap < chunk_size, "overlap must be smaller than chunk_size");
+    assert!(
+        overlap < chunk_size,
+        "overlap must be smaller than chunk_size"
+    );
 
     let chars: Vec<char> = text.chars().collect();
     let mut chunks = Vec::new();

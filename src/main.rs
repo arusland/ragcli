@@ -5,7 +5,7 @@ mod llm;
 mod parser;
 mod store;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn doc_command(db_path: &PathBuf, term: &str, rm: bool, force: bool) -> Result<()> {
+fn doc_command(db_path: &Path, term: &str, rm: bool, force: bool) -> Result<()> {
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
@@ -119,7 +119,7 @@ fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-fn show_status(db_path: &PathBuf) -> Result<()> {
+fn show_status(db_path: &Path) -> Result<()> {
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
@@ -141,7 +141,7 @@ fn show_status(db_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn add_document(db_path: &PathBuf, doc_path: &PathBuf, verbose: bool) -> Result<()> {
+fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     let text = parser::parser_for(doc_path)?.parse(doc_path)?;
@@ -186,7 +186,7 @@ fn add_document(db_path: &PathBuf, doc_path: &PathBuf, verbose: bool) -> Result<
     Ok(())
 }
 
-fn ask_question(db_path: &PathBuf, question: &str, top_k: usize, verbose: bool) -> Result<()> {
+fn ask_question(db_path: &Path, question: &str, top_k: usize, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     if verbose {
@@ -235,7 +235,11 @@ const PREVIEW_CHARS: usize = 200;
 fn format_retrieved(results: &[SearchResult], top_k: usize) -> String {
     let mut out = format!("Retrieved {} chunk(s) (top-k = {top_k}):\n", results.len());
     for (i, result) in results.iter().enumerate() {
-        let collapsed = result.content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let collapsed = result
+            .content
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut preview: String = collapsed.chars().take(PREVIEW_CHARS).collect();
         if collapsed.chars().count() > PREVIEW_CHARS {
             preview.push('…');
