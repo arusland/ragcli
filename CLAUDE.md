@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`rag-cli` is a Rust CLI RAG tool: it parses documents, chunks the text, embeds chunks via a local Ollama server, and stores vectors in SQLite. See README.md for usage.
+`ragcli` is a Rust CLI RAG tool: it parses documents, chunks the text, embeds chunks via a local Ollama server, and stores vectors in SQLite. See README.md for usage.
 
 ## Commands
 

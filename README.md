@@ -1,4 +1,4 @@
-# rag-cli
+# ragcli
 
 A simple RAG (Retrieval-Augmented Generation) CLI tool in Rust. Documents are parsed, split into chunks, embedded with a local [Ollama](https://ollama.com) model, and stored as vectors in SQLite.
 

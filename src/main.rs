@@ -23,7 +23,7 @@ const SYSTEM_PROMPT: &str = "You are a helpful assistant. Answer the user's ques
     than guessing. Be concise.";
 
 #[derive(Parser)]
-#[command(name = "rag-cli", about = "Simple RAG CLI backed by SQLite and Ollama")]
+#[command(name = "ragcli", about = "Simple RAG CLI backed by SQLite and Ollama")]
 struct Cli {
     /// Path to the vector database file
     #[arg(long, global = true, default_value = "rag.db")]
@@ -207,7 +207,7 @@ fn ask_question(db_path: &PathBuf, question: &str, top_k: usize, verbose: bool) 
     let results = store.search(&query, top_k)?;
     if results.is_empty() {
         bail!(
-            "no documents found in {} — add one first with `rag-cli add <path>`",
+            "no documents found in {} — add one first with `ragcli add <path>`",
             db_path.display()
         );
     }
