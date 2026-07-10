@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 
-use super::{EmbeddedChunk, VectorStore};
+use super::{EmbeddedChunk, SearchResult, VectorStore, cosine_similarity};
 
 pub struct SqliteVectorStore {
     conn: Connection,
@@ -29,7 +29,6 @@ fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
-#[cfg(test)]
 fn embedding_from_bytes(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
@@ -93,6 +92,50 @@ impl VectorStore for SqliteVectorStore {
         drop(insert);
 
         tx.commit().context("failed to commit document")
+    }
+
+    fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchResult>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT d.source_path, c.content, c.embedding, c.dim
+                 FROM chunks c JOIN documents d ON d.id = c.document_id",
+            )
+            .context("failed to query chunks for similarity search")?;
+
+        let mut results = Vec::new();
+        let mut skipped = 0usize;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let dim: i64 = row.get(3)?;
+            if dim as usize != query.len() {
+                skipped += 1;
+                continue;
+            }
+            let blob: Vec<u8> = row.get(2)?;
+            results.push(SearchResult {
+                source_path: row.get(0)?,
+                content: row.get(1)?,
+                score: cosine_similarity(query, &embedding_from_bytes(&blob)),
+            });
+        }
+
+        if results.is_empty() && skipped > 0 {
+            bail!(
+                "no stored embeddings match the query dimension {} ({skipped} chunk(s) have a \
+                 different dimension). Was the database built with a different embedding model? \
+                 Re-add your documents with the current model.",
+                query.len()
+            );
+        }
+
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(top_k);
+        Ok(results)
     }
 }
 
@@ -160,5 +203,85 @@ mod tests {
             .unwrap();
         assert_eq!(docs, 1);
         assert_eq!(chunks, 1);
+    }
+
+    fn chunk(index: usize, content: &str, embedding: Vec<f32>) -> EmbeddedChunk {
+        EmbeddedChunk {
+            index,
+            content: content.into(),
+            embedding,
+        }
+    }
+
+    #[test]
+    fn search_ranks_by_similarity() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store
+            .add_document("a.txt", &[chunk(0, "about apples", vec![1.0, 0.0, 0.0])])
+            .unwrap();
+        store
+            .add_document("b.txt", &[chunk(0, "about bananas", vec![0.0, 1.0, 0.0])])
+            .unwrap();
+
+        let results = store.search(&[0.9, 0.1, 0.0], 5).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].source_path, "a.txt");
+        assert_eq!(results[0].content, "about apples");
+        assert!(results[0].score > 0.9);
+        assert_eq!(results[1].source_path, "b.txt");
+        assert!(results[1].score < results[0].score);
+    }
+
+    #[test]
+    fn search_truncates_to_top_k() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store
+            .add_document(
+                "doc.txt",
+                &[
+                    chunk(0, "one", vec![1.0, 0.0]),
+                    chunk(1, "two", vec![0.0, 1.0]),
+                    chunk(2, "three", vec![1.0, 1.0]),
+                ],
+            )
+            .unwrap();
+
+        let results = store.search(&[1.0, 0.0], 2).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_on_empty_store_returns_empty() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        assert!(store.search(&[1.0, 0.0], 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_errors_when_all_dims_mismatch() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store.add_document("doc.txt", &sample_chunks()).unwrap();
+
+        let err = store.search(&[1.0, 0.0], 5).unwrap_err();
+        assert!(err.to_string().contains("dimension"));
+    }
+
+    #[test]
+    fn search_skips_mismatched_dims_but_returns_matching() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store
+            .add_document("old.txt", &[chunk(0, "old model", vec![1.0, 0.0])])
+            .unwrap();
+        store
+            .add_document("new.txt", &[chunk(0, "new model", vec![1.0, 0.0, 0.0])])
+            .unwrap();
+
+        let results = store.search(&[1.0, 0.0, 0.0], 5).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source_path, "new.txt");
     }
 }
