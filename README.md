@@ -45,14 +45,29 @@ cargo run -- status
 #
 # Recent documents:
 #   2026-07-10 14:03:12  .\notes.txt (3 chunk(s))
+
+# List stored documents whose path contains a substring, most recently updated first
+cargo run -- doc notes
+# 2026-07-10 14:03:12  .\notes.txt (3 chunk(s))
+
+# List all stored documents (quote the * so the shell doesn't expand it)
+cargo run -- doc "*"
+
+# Delete the matched documents (asks for confirmation)
+cargo run -- doc notes --rm
+# 2026-07-10 14:03:12  .\notes.txt (3 chunk(s))
+# Delete 1 document(s)? [y/N]: y
+# Deleted 1 document(s)
 ```
 
-`status` lists up to 5 most recently added documents (times shown in the local time zone) and does not need `OLLAMA_URL` to be set.
+`status` lists up to 5 most recently added documents (times shown in the local time zone); neither `status` nor `doc` needs `OLLAMA_URL` to be set.
 
 Options:
 
 - `--db <path>` — path to the SQLite database file (default: `./rag.db`)
 - `--top-k <n>` — (`ask` only) number of most similar chunks to retrieve as context (default: 5)
+- `--rm` — (`doc` only) delete the matched documents after listing them
+- `--force` — (`doc --rm` only) delete without asking for confirmation
 - `--verbose` / `-v` — print diagnostics to stderr: the retrieved chunks with their similarity scores and the raw request/response of the `/api/chat` call; stdout (answer + sources) is unaffected
 
 Re-running `add` on the same file replaces its previously stored chunks, so the command is idempotent.

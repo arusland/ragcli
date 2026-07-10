@@ -47,6 +47,13 @@ pub trait VectorStore {
 
     /// Returns up to `limit` documents, most recently added first.
     fn recent_documents(&self, limit: usize) -> Result<Vec<StoredDocument>>;
+
+    /// Returns all documents whose `source_path` contains `term`,
+    /// most recently added/updated first.
+    fn find_documents(&self, term: &str) -> Result<Vec<StoredDocument>>;
+
+    /// Deletes a document and its chunks. Returns false if no such document.
+    fn delete_document(&mut self, source_path: &str) -> Result<bool>;
 }
 
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

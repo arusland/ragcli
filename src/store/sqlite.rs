@@ -25,6 +25,13 @@ impl SqliteVectorStore {
     }
 }
 
+/// Escapes LIKE wildcards so `term` matches literally under `ESCAPE '\'`.
+fn escape_like(term: &str) -> String {
+    term.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
@@ -168,6 +175,41 @@ impl VectorStore for SqliteVectorStore {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(docs)
+    }
+
+    fn find_documents(&self, term: &str) -> Result<Vec<StoredDocument>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id)
+                 FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+                 WHERE d.source_path LIKE '%' || ?1 || '%' ESCAPE '\\'
+                 GROUP BY d.id
+                 ORDER BY d.added_at DESC, d.id DESC",
+            )
+            .context("failed to query documents by substring")?;
+
+        let docs = stmt
+            .query_map(params![escape_like(term)], |row| {
+                Ok(StoredDocument {
+                    source_path: row.get(0)?,
+                    added_at: row.get(1)?,
+                    chunk_count: row.get::<_, i64>(2)? as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(docs)
+    }
+
+    fn delete_document(&mut self, source_path: &str) -> Result<bool> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM documents WHERE source_path = ?1",
+                params![source_path],
+            )
+            .with_context(|| format!("failed to delete document {source_path}"))?;
+        Ok(deleted > 0)
     }
 }
 
@@ -351,6 +393,72 @@ mod tests {
         assert_eq!(recent[0].added_at, expected);
         assert_eq!(recent[0].chunk_count, 2);
         assert_eq!(recent[1].source_path, "c.txt");
+    }
+
+    #[test]
+    fn find_documents_matches_substring_newest_first() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        for name in ["notes/a.txt", "notes/b.txt", "other.md"] {
+            store.add_document(name, &sample_chunks()).unwrap();
+        }
+        // in-memory inserts land in the same second, so set distinct timestamps
+        for (name, ts) in [
+            ("notes/a.txt", "2026-01-01 10:00:00"),
+            ("notes/b.txt", "2026-01-02 10:00:00"),
+        ] {
+            store
+                .conn
+                .execute(
+                    "UPDATE documents SET added_at = ?1 WHERE source_path = ?2",
+                    params![ts, name],
+                )
+                .unwrap();
+        }
+
+        let docs = store.find_documents("notes/").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].source_path, "notes/b.txt");
+        assert_eq!(docs[0].chunk_count, 2);
+        assert_eq!(docs[1].source_path, "notes/a.txt");
+
+        assert!(store.find_documents("missing").unwrap().is_empty());
+        // the empty term matches every document ('*' at the CLI maps to it)
+        assert_eq!(store.find_documents("").unwrap().len(), 3);
+    }
+
+    #[test]
+    fn find_documents_treats_like_wildcards_literally() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store.add_document("100x.txt", &sample_chunks()).unwrap();
+        store.add_document("100%.txt", &sample_chunks()).unwrap();
+
+        let docs = store.find_documents("100%").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].source_path, "100%.txt");
+
+        let docs = store.find_documents("100_").unwrap();
+        assert!(docs.is_empty());
+    }
+
+    #[test]
+    fn delete_document_removes_document_and_chunks() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store.add_document("a.txt", &sample_chunks()).unwrap();
+        store.add_document("b.txt", &sample_chunks()).unwrap();
+
+        assert!(store.delete_document("a.txt").unwrap());
+        assert_eq!(store.document_count().unwrap(), 1);
+        let chunks: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(chunks, 2);
+
+        assert!(!store.delete_document("unknown.txt").unwrap());
+        assert_eq!(store.document_count().unwrap(), 1);
     }
 
     #[test]

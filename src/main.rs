@@ -54,6 +54,17 @@ enum Command {
     },
     /// Show the configured models and what the database contains
     Status,
+    /// List stored documents whose path contains TERM, most recently updated first
+    Doc {
+        /// Substring to match against stored document paths; '*' lists all documents
+        term: String,
+        /// Delete the matched documents
+        #[arg(long)]
+        rm: bool,
+        /// With --rm: delete without asking for confirmation
+        #[arg(long, requires = "rm")]
+        force: bool,
+    },
 }
 
 const RECENT_DOCUMENTS: usize = 5;
@@ -64,7 +75,48 @@ fn main() -> Result<()> {
         Command::Add { path } => add_document(&cli.db, &path, cli.verbose),
         Command::Ask { question, top_k } => ask_question(&cli.db, &question, top_k, cli.verbose),
         Command::Status => show_status(&cli.db),
+        Command::Doc { term, rm, force } => doc_command(&cli.db, &term, rm, force),
     }
+}
+
+fn doc_command(db_path: &PathBuf, term: &str, rm: bool, force: bool) -> Result<()> {
+    let mut store = SqliteVectorStore::open(db_path)?;
+    store.init()?;
+
+    // '*' lists everything; the empty substring matches every path
+    let docs = store.find_documents(if term == "*" { "" } else { term })?;
+    if docs.is_empty() {
+        println!("no documents match '{term}'");
+        return Ok(());
+    }
+    for doc in &docs {
+        println!(
+            "{}  {} ({} chunk(s))",
+            doc.added_at, doc.source_path, doc.chunk_count
+        );
+    }
+
+    if rm {
+        if !force {
+            print!("Delete {} document(s)? [y/N]: ", docs.len());
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            if !is_yes(&answer) {
+                println!("aborted");
+                return Ok(());
+            }
+        }
+        for doc in &docs {
+            store.delete_document(&doc.source_path)?;
+        }
+        println!("Deleted {} document(s)", docs.len());
+    }
+    Ok(())
+}
+
+fn is_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 fn show_status(db_path: &PathBuf) -> Result<()> {
@@ -216,6 +268,16 @@ fn build_prompt(question: &str, results: &[SearchResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_yes_accepts_only_y_or_yes_case_insensitively() {
+        for answer in ["y", "Y", "yes", "YES", " y \n"] {
+            assert!(is_yes(answer), "{answer:?} should be yes");
+        }
+        for answer in ["", "\n", "n", "no", "yess", "sure"] {
+            assert!(!is_yes(answer), "{answer:?} should not be yes");
+        }
+    }
 
     #[test]
     fn build_prompt_numbers_chunks_and_includes_question() {
