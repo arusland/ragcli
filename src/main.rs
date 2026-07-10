@@ -29,6 +29,10 @@ struct Cli {
     #[arg(long, global = true, default_value = "rag.db")]
     db: PathBuf,
 
+    /// Print diagnostic details (retrieved chunks, LLM request/response) to stderr
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -53,12 +57,12 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Add { path } => add_document(&cli.db, &path),
-        Command::Ask { question, top_k } => ask_question(&cli.db, &question, top_k),
+        Command::Add { path } => add_document(&cli.db, &path, cli.verbose),
+        Command::Ask { question, top_k } => ask_question(&cli.db, &question, top_k, cli.verbose),
     }
 }
 
-fn add_document(db_path: &PathBuf, doc_path: &PathBuf) -> Result<()> {
+fn add_document(db_path: &PathBuf, doc_path: &PathBuf, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     let text = parser::parser_for(doc_path)?.parse(doc_path)?;
@@ -67,6 +71,14 @@ fn add_document(db_path: &PathBuf, doc_path: &PathBuf) -> Result<()> {
         bail!("document {} contains no text", doc_path.display());
     }
 
+    if verbose {
+        eprintln!(
+            "Embedding {} chunk(s) with model '{}' at {}",
+            chunks.len(),
+            config.embedding_model,
+            config.ollama_url
+        );
+    }
     let embedder = OllamaEmbedder::new(&config.ollama_url, &config.embedding_model);
     let embeddings = embedder.embed(&chunks)?;
     let dim = embeddings.first().map_or(0, Vec::len);
@@ -95,9 +107,15 @@ fn add_document(db_path: &PathBuf, doc_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn ask_question(db_path: &PathBuf, question: &str, top_k: usize) -> Result<()> {
+fn ask_question(db_path: &PathBuf, question: &str, top_k: usize, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
+    if verbose {
+        eprintln!(
+            "Embedding question with model '{}' at {}",
+            config.embedding_model, config.ollama_url
+        );
+    }
     let embedder = OllamaEmbedder::new(&config.ollama_url, &config.embedding_model);
     let query = embedder
         .embed(&[question.to_string()])?
@@ -115,7 +133,11 @@ fn ask_question(db_path: &PathBuf, question: &str, top_k: usize) -> Result<()> {
         );
     }
 
-    let chat = OllamaChat::new(&config.ollama_url, &config.chat_model);
+    if verbose {
+        eprint!("{}", format_retrieved(&results, top_k));
+    }
+
+    let chat = OllamaChat::new(&config.ollama_url, &config.chat_model).with_verbose(verbose);
     let answer = chat.chat(SYSTEM_PROMPT, &build_prompt(question, &results))?;
 
     println!("{answer}");
@@ -127,6 +149,27 @@ fn ask_question(db_path: &PathBuf, question: &str, top_k: usize) -> Result<()> {
         }
     }
     Ok(())
+}
+
+const PREVIEW_CHARS: usize = 200;
+
+fn format_retrieved(results: &[SearchResult], top_k: usize) -> String {
+    let mut out = format!("Retrieved {} chunk(s) (top-k = {top_k}):\n", results.len());
+    for (i, result) in results.iter().enumerate() {
+        let collapsed = result.content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut preview: String = collapsed.chars().take(PREVIEW_CHARS).collect();
+        if collapsed.chars().count() > PREVIEW_CHARS {
+            preview.push('…');
+        }
+        out.push_str(&format!(
+            "[{}] score {:.4}  {}\n    {}\n",
+            i + 1,
+            result.score,
+            result.source_path,
+            preview
+        ));
+    }
+    out
 }
 
 fn build_prompt(question: &str, results: &[SearchResult]) -> String {
@@ -165,5 +208,28 @@ mod tests {
         assert!(prompt.contains("[1] (a.txt)\napples are red"));
         assert!(prompt.contains("[2] (b.txt)\nbananas are yellow"));
         assert!(prompt.ends_with("Question: What color are apples?"));
+    }
+
+    #[test]
+    fn format_retrieved_numbers_chunks_with_scores_and_truncates_previews() {
+        let results = vec![
+            SearchResult {
+                source_path: "a.txt".into(),
+                content: "apples\nare  red".into(),
+                score: 0.9,
+            },
+            SearchResult {
+                source_path: "b.txt".into(),
+                content: "x".repeat(PREVIEW_CHARS + 50),
+                score: 0.5,
+            },
+        ];
+        let out = format_retrieved(&results, 5);
+        assert!(out.starts_with("Retrieved 2 chunk(s) (top-k = 5):\n"));
+        // newlines and repeated spaces are collapsed in the preview
+        assert!(out.contains("[1] score 0.9000  a.txt\n    apples are red\n"));
+        assert!(out.contains("[2] score 0.5000  b.txt\n"));
+        let long_preview = format!("{}…", "x".repeat(PREVIEW_CHARS));
+        assert!(out.contains(&long_preview));
     }
 }

@@ -41,6 +41,7 @@ Options:
 
 - `--db <path>` — path to the SQLite database file (default: `./rag.db`)
 - `--top-k <n>` — (`ask` only) number of most similar chunks to retrieve as context (default: 5)
+- `--verbose` / `-v` — print diagnostics to stderr: the retrieved chunks with their similarity scores and the raw request/response of the `/api/chat` call; stdout (answer + sources) is unaffected
 
 Re-running `add` on the same file replaces its previously stored chunks, so the command is idempotent.
 

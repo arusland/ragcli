@@ -19,7 +19,7 @@ Running the binary requires `OLLAMA_URL` (mandatory; e.g. `http://localhost:1143
 
 ```sh
 OLLAMA_URL=http://localhost:11434 cargo run -- add path/to/doc.txt [--db rag.db]
-OLLAMA_URL=http://localhost:11434 cargo run -- ask "question" [--top-k 5] [--db rag.db]
+OLLAMA_URL=http://localhost:11434 cargo run -- ask "question" [--top-k 5] [--db rag.db] [--verbose]
 ```
 
 Tests need no Ollama server. For manual end-to-end testing without a real model, a stub HTTP server answering `POST /api/embed` with `{"embeddings": [[...], ...]}` and `POST /api/chat` with `{"message": {"content": "..."}}` is sufficient.
