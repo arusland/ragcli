@@ -35,6 +35,10 @@ The codebase is built around three traits, each in its module's `mod.rs`, with i
 
 `src/chunker.rs` is a free function, not a trait: ~1500-char chunks with 200-char overlap (constants in `main.rs`), preferring paragraph > newline > whitespace breaks within the last third of the window. Chunks are trimmed; because of the overlap, consecutive chunks intentionally share content — keep this in mind when asserting on chunk boundaries in tests.
 
+## Workflow
+
+- After each change, generate a short one-line commit message describing it (e.g. `fix: handle empty chunks`). Do not commit unless explicitly asked.
+
 ## Conventions
 
 - Errors: `anyhow` everywhere, with `.context()`/`bail!` messages that tell the user what to do (e.g. which env var to set, `ollama pull` hint).
