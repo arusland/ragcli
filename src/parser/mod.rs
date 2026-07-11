@@ -1,13 +1,15 @@
+pub mod pdf;
 pub mod plain_text;
 
 use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use pdf::PdfParser;
 use plain_text::PlainTextParser;
 
 /// Extracts plain text from a document file. One implementation per document
-/// type (plain text now; PDF, HTML, ... later).
+/// type (plain text and PDF now; HTML, ... later).
 pub trait DocumentParser {
     /// Returns true if this parser can handle the given file.
     fn supports(&self, path: &Path) -> bool;
@@ -16,7 +18,9 @@ pub trait DocumentParser {
     fn parse(&self, path: &Path) -> Result<String>;
 }
 
-static PARSERS: &[&(dyn DocumentParser + Sync)] = &[&PlainTextParser];
+// PlainTextParser claims extensionless files, so it must stay first if a
+// later parser also wants them.
+static PARSERS: &[&(dyn DocumentParser + Sync)] = &[&PlainTextParser, &PdfParser];
 
 /// Returns the first registered parser that supports `path`.
 pub fn parser_for(path: &Path) -> Result<&'static dyn DocumentParser> {
@@ -39,7 +43,12 @@ mod tests {
     }
 
     #[test]
+    fn selects_pdf_parser_for_pdf_files() {
+        assert!(parser_for(Path::new("report.pdf")).is_ok());
+    }
+
+    #[test]
     fn rejects_unknown_extensions() {
-        assert!(parser_for(Path::new("report.pdf")).is_err());
+        assert!(parser_for(Path::new("image.png")).is_err());
     }
 }

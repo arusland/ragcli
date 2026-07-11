@@ -77,6 +77,7 @@ Re-running `add` on the same file replaces its previously stored chunks, so the 
 | Parser | Extensions |
 |---|---|
 | `PlainTextParser` | `.txt`, `.md`, `.markdown`, `.log`, `.text`, and files without an extension |
+| `PdfParser` | `.pdf` (text extraction only; scanned/image-only PDFs yield no text) |
 
 Other file types are rejected with `unsupported document type`.
 
@@ -108,7 +109,7 @@ chunks(id, document_id → documents, chunk_index, content, embedding BLOB, dim)
 ## Extending
 
 - **Another storage backend** (Qdrant, pgvector, ...): implement the `VectorStore` trait (`src/store/mod.rs`) and swap the instantiation in `main.rs`.
-- **Another document type** (PDF, HTML, ...): implement the `DocumentParser` trait and register it in the `PARSERS` list (`src/parser/mod.rs`).
+- **Another document type** (HTML, ...): implement the `DocumentParser` trait and register it in the `PARSERS` list (`src/parser/mod.rs`).
 - **Another embedding backend**: implement the `EmbeddingProvider` trait (`src/embedding/mod.rs`).
 - **Another chat backend**: implement the `ChatProvider` trait (`src/llm/mod.rs`).
 
