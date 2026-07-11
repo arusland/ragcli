@@ -5,7 +5,7 @@ mod llm;
 mod parser;
 mod store;
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -147,12 +147,36 @@ fn show_status(db_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Absolute, normalized form of `path`, used as the document's `source_path` key
+/// so the same file is never stored under several spellings. Prefers
+/// `canonicalize` (resolves symlinks); for paths that do not exist it falls back
+/// to lexical normalization so read failures are still recorded under a stable key.
+fn normalize_source_path(path: &Path) -> Result<PathBuf> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Ok(canonical);
+    }
+    let absolute = std::path::absolute(path)
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other),
+        }
+    }
+    Ok(normalized)
+}
+
 fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
+    let doc_path = &normalize_source_path(doc_path)?;
     let source_path = doc_path.to_string_lossy();
     let bytes = match std::fs::read(doc_path)
         .with_context(|| format!("failed to read {}", doc_path.display()))
@@ -306,6 +330,28 @@ fn build_prompt(question: &str, results: &[SearchResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_source_path_makes_existing_relative_path_absolute_and_clean() {
+        // tests run with the crate root as CWD, where Cargo.toml exists
+        let normalized = normalize_source_path(Path::new("./Cargo.toml")).unwrap();
+        assert!(normalized.is_absolute());
+        assert_eq!(normalized.file_name().unwrap(), "Cargo.toml");
+        assert!(
+            normalized
+                .components()
+                .all(|c| !matches!(c, Component::CurDir | Component::ParentDir))
+        );
+    }
+
+    #[test]
+    fn normalize_source_path_lexically_resolves_missing_paths() {
+        let normalized = normalize_source_path(Path::new("no-such-dir/../missing.txt")).unwrap();
+        assert_eq!(
+            normalized,
+            std::env::current_dir().unwrap().join("missing.txt")
+        );
+    }
 
     #[test]
     fn is_yes_accepts_only_y_or_yes_case_insensitively() {
