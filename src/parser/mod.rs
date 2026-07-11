@@ -1,3 +1,5 @@
+pub mod docx;
+pub mod excel;
 pub mod pdf;
 pub mod plain_text;
 
@@ -5,11 +7,13 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use docx::DocxParser;
+use excel::ExcelParser;
 use pdf::PdfParser;
 use plain_text::PlainTextParser;
 
 /// Extracts plain text from a document file. One implementation per document
-/// type (plain text and PDF now; HTML, ... later).
+/// type (plain text, PDF, Word, Excel now; HTML, ... later).
 pub trait DocumentParser {
     /// Returns true if this parser can handle the given file.
     fn supports(&self, path: &Path) -> bool;
@@ -20,7 +24,8 @@ pub trait DocumentParser {
 
 // PlainTextParser claims extensionless files, so it must stay first if a
 // later parser also wants them.
-static PARSERS: &[&(dyn DocumentParser + Sync)] = &[&PlainTextParser, &PdfParser];
+static PARSERS: &[&(dyn DocumentParser + Sync)] =
+    &[&PlainTextParser, &PdfParser, &DocxParser, &ExcelParser];
 
 /// Returns the first registered parser that supports `path`.
 pub fn parser_for(path: &Path) -> Result<&'static dyn DocumentParser> {
@@ -48,7 +53,16 @@ mod tests {
     }
 
     #[test]
+    fn selects_office_parsers_for_word_and_excel_files() {
+        assert!(parser_for(Path::new("report.docx")).is_ok());
+        assert!(parser_for(Path::new("data.xlsx")).is_ok());
+        assert!(parser_for(Path::new("legacy.xls")).is_ok());
+    }
+
+    #[test]
     fn rejects_unknown_extensions() {
         assert!(parser_for(Path::new("image.png")).is_err());
+        // Legacy binary .doc is not supported (docx only).
+        assert!(parser_for(Path::new("legacy.doc")).is_err());
     }
 }

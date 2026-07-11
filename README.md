@@ -78,6 +78,8 @@ Re-running `add` on the same file replaces its previously stored chunks, so the 
 |---|---|
 | `PlainTextParser` | `.txt`, `.md`, `.markdown`, `.log`, `.text`, and files without an extension |
 | `PdfParser` | `.pdf` (text extraction only; scanned/image-only PDFs yield no text) |
+| `DocxParser` | `.docx` (Word 2007+; legacy binary `.doc` is not supported) |
+| `ExcelParser` | `.xlsx`, `.xlsm`, `.xlsb`, `.xls` (each sheet becomes tab-separated rows under a `Sheet: <name>` heading) |
 
 Other file types are rejected with `unsupported document type`.
 
