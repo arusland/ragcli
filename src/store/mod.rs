@@ -38,8 +38,20 @@ pub trait VectorStore {
 
     /// Upserts a document and its chunk embeddings. Chunks previously stored
     /// for the same `source_path` are replaced, and any recorded parse error
-    /// is cleared.
-    fn add_document(&mut self, source_path: &str, chunks: &[EmbeddedChunk]) -> Result<()>;
+    /// is cleared. `size` and `hash` describe the source file so an unchanged
+    /// file can be detected via `document_fingerprint` and skipped.
+    fn add_document(
+        &mut self,
+        source_path: &str,
+        size: u64,
+        hash: &str,
+        chunks: &[EmbeddedChunk],
+    ) -> Result<()>;
+
+    /// Returns the size and hash recorded by the last successful add of
+    /// `source_path`, or None if the document is unknown or its last add
+    /// failed (so it should be retried, not skipped).
+    fn document_fingerprint(&self, source_path: &str) -> Result<Option<(u64, String)>>;
 
     /// Upserts a document and records the error that prevented it from being
     /// parsed. Chunks from an earlier successful add are kept.

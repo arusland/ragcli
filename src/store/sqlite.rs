@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{EmbeddedChunk, SearchResult, StoredDocument, VectorStore, cosine_similarity};
 
@@ -51,7 +51,9 @@ impl VectorStore for SqliteVectorStore {
                      id INTEGER PRIMARY KEY,
                      source_path TEXT NOT NULL UNIQUE,
                      added_at TEXT NOT NULL DEFAULT (datetime('now')),
-                     error TEXT
+                     error TEXT,
+                     size INTEGER,
+                     hash TEXT
                  );
                  CREATE TABLE IF NOT EXISTS chunks (
                      id INTEGER PRIMARY KEY,
@@ -66,13 +68,20 @@ impl VectorStore for SqliteVectorStore {
         Ok(())
     }
 
-    fn add_document(&mut self, source_path: &str, chunks: &[EmbeddedChunk]) -> Result<()> {
+    fn add_document(
+        &mut self,
+        source_path: &str,
+        size: u64,
+        hash: &str,
+        chunks: &[EmbeddedChunk],
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
 
         tx.execute(
-            "INSERT INTO documents (source_path) VALUES (?1)
-             ON CONFLICT(source_path) DO UPDATE SET added_at = datetime('now'), error = NULL",
-            params![source_path],
+            "INSERT INTO documents (source_path, size, hash) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_path) DO UPDATE SET added_at = datetime('now'), error = NULL,
+                 size = excluded.size, hash = excluded.hash",
+            params![source_path, size as i64, hash],
         )?;
         let document_id: i64 = tx.query_row(
             "SELECT id FROM documents WHERE source_path = ?1",
@@ -101,6 +110,21 @@ impl VectorStore for SqliteVectorStore {
         drop(insert);
 
         tx.commit().context("failed to commit document")
+    }
+
+    fn document_fingerprint(&self, source_path: &str) -> Result<Option<(u64, String)>> {
+        let fingerprint = self
+            .conn
+            .query_row(
+                "SELECT size, hash FROM documents
+                 WHERE source_path = ?1 AND error IS NULL
+                   AND size IS NOT NULL AND hash IS NOT NULL",
+                params![source_path],
+                |row| Ok((row.get::<_, i64>(0)? as u64, row.get(1)?)),
+            )
+            .optional()
+            .with_context(|| format!("failed to look up fingerprint of document {source_path}"))?;
+        Ok(fingerprint)
     }
 
     fn set_document_error(&mut self, source_path: &str, error: &str) -> Result<()> {
@@ -252,7 +276,9 @@ mod tests {
     fn add_document_round_trips_embeddings() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("doc.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("doc.txt", 1, "h", &sample_chunks())
+            .unwrap();
 
         let (content, blob, dim): (String, Vec<u8>, i64) = store
             .conn
@@ -271,10 +297,14 @@ mod tests {
     fn readding_replaces_chunks() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("doc.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("doc.txt", 1, "h", &sample_chunks())
+            .unwrap();
         store
             .add_document(
                 "doc.txt",
+                2,
+                "h2",
                 &[EmbeddedChunk {
                     index: 0,
                     content: "only chunk now".into(),
@@ -308,10 +338,20 @@ mod tests {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
         store
-            .add_document("a.txt", &[chunk(0, "about apples", vec![1.0, 0.0, 0.0])])
+            .add_document(
+                "a.txt",
+                1,
+                "h",
+                &[chunk(0, "about apples", vec![1.0, 0.0, 0.0])],
+            )
             .unwrap();
         store
-            .add_document("b.txt", &[chunk(0, "about bananas", vec![0.0, 1.0, 0.0])])
+            .add_document(
+                "b.txt",
+                1,
+                "h",
+                &[chunk(0, "about bananas", vec![0.0, 1.0, 0.0])],
+            )
             .unwrap();
 
         let results = store.search(&[0.9, 0.1, 0.0], 5).unwrap();
@@ -330,6 +370,8 @@ mod tests {
         store
             .add_document(
                 "doc.txt",
+                1,
+                "h",
                 &[
                     chunk(0, "one", vec![1.0, 0.0]),
                     chunk(1, "two", vec![0.0, 1.0]),
@@ -353,7 +395,9 @@ mod tests {
     fn search_errors_when_all_dims_mismatch() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("doc.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("doc.txt", 1, "h", &sample_chunks())
+            .unwrap();
 
         let err = store.search(&[1.0, 0.0], 5).unwrap_err();
         assert!(err.to_string().contains("dimension"));
@@ -365,10 +409,16 @@ mod tests {
         store.init().unwrap();
         assert_eq!(store.document_count().unwrap(), 0);
 
-        store.add_document("a.txt", &sample_chunks()).unwrap();
-        store.add_document("b.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("a.txt", 1, "h", &sample_chunks())
+            .unwrap();
+        store
+            .add_document("b.txt", 1, "h", &sample_chunks())
+            .unwrap();
         // re-adding must not double-count
-        store.add_document("a.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("a.txt", 1, "h", &sample_chunks())
+            .unwrap();
         assert_eq!(store.document_count().unwrap(), 2);
     }
 
@@ -377,7 +427,7 @@ mod tests {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
         for name in ["a.txt", "b.txt", "c.txt"] {
-            store.add_document(name, &sample_chunks()).unwrap();
+            store.add_document(name, 1, "h", &sample_chunks()).unwrap();
         }
         // in-memory inserts land in the same second, so set distinct timestamps
         for (name, ts) in [
@@ -416,7 +466,7 @@ mod tests {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
         for name in ["notes/a.txt", "notes/b.txt", "other.md"] {
-            store.add_document(name, &sample_chunks()).unwrap();
+            store.add_document(name, 1, "h", &sample_chunks()).unwrap();
         }
         // in-memory inserts land in the same second, so set distinct timestamps
         for (name, ts) in [
@@ -447,8 +497,12 @@ mod tests {
     fn find_documents_treats_like_wildcards_literally() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("100x.txt", &sample_chunks()).unwrap();
-        store.add_document("100%.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("100x.txt", 1, "h", &sample_chunks())
+            .unwrap();
+        store
+            .add_document("100%.txt", 1, "h", &sample_chunks())
+            .unwrap();
 
         let docs = store.find_documents("100%").unwrap();
         assert_eq!(docs.len(), 1);
@@ -471,7 +525,9 @@ mod tests {
         assert_eq!(docs[0].error.as_deref(), Some("failed to extract text"));
         assert_eq!(docs[0].chunk_count, 0);
 
-        store.add_document("broken.pdf", &sample_chunks()).unwrap();
+        store
+            .add_document("broken.pdf", 1, "h", &sample_chunks())
+            .unwrap();
         let docs = store.find_documents("broken").unwrap();
         assert_eq!(docs[0].error, None);
         assert_eq!(docs[0].chunk_count, 2);
@@ -481,7 +537,9 @@ mod tests {
     fn set_document_error_keeps_chunks_of_earlier_successful_add() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("doc.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("doc.txt", 1, "h", &sample_chunks())
+            .unwrap();
 
         store.set_document_error("doc.txt", "boom").unwrap();
         assert_eq!(store.document_count().unwrap(), 1);
@@ -491,36 +549,64 @@ mod tests {
     }
 
     #[test]
-    fn init_adds_error_column_to_pre_existing_schema() {
+    fn document_fingerprint_round_trips_and_updates_on_readd() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
-        // schema from before the error column existed
+        store.init().unwrap();
+        assert_eq!(store.document_fingerprint("doc.txt").unwrap(), None);
+
         store
-            .conn
-            .execute_batch(
-                "CREATE TABLE documents (
-                     id INTEGER PRIMARY KEY,
-                     source_path TEXT NOT NULL UNIQUE,
-                     added_at TEXT NOT NULL DEFAULT (datetime('now'))
-                 );
-                 INSERT INTO documents (source_path) VALUES ('old.txt');",
-            )
+            .add_document("doc.txt", 42, "abc", &sample_chunks())
             .unwrap();
+        assert_eq!(
+            store.document_fingerprint("doc.txt").unwrap(),
+            Some((42, "abc".into()))
+        );
 
-        store.init().unwrap();
-        // idempotent: a second init must not fail on the existing column
+        store
+            .add_document("doc.txt", 43, "def", &sample_chunks())
+            .unwrap();
+        assert_eq!(
+            store.document_fingerprint("doc.txt").unwrap(),
+            Some((43, "def".into()))
+        );
+    }
+
+    #[test]
+    fn document_fingerprint_is_hidden_while_an_error_is_recorded() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
 
-        store.set_document_error("old.txt", "boom").unwrap();
-        let docs = store.find_documents("old.txt").unwrap();
-        assert_eq!(docs[0].error.as_deref(), Some("boom"));
+        // a document whose only add failed has no fingerprint
+        store.set_document_error("broken.pdf", "boom").unwrap();
+        assert_eq!(store.document_fingerprint("broken.pdf").unwrap(), None);
+
+        // an error after a successful add hides the fingerprint so the
+        // document is retried instead of skipped
+        store
+            .add_document("doc.txt", 42, "abc", &sample_chunks())
+            .unwrap();
+        store.set_document_error("doc.txt", "boom").unwrap();
+        assert_eq!(store.document_fingerprint("doc.txt").unwrap(), None);
+
+        store
+            .add_document("doc.txt", 42, "abc", &sample_chunks())
+            .unwrap();
+        assert_eq!(
+            store.document_fingerprint("doc.txt").unwrap(),
+            Some((42, "abc".into()))
+        );
     }
 
     #[test]
     fn delete_document_removes_document_and_chunks() {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
-        store.add_document("a.txt", &sample_chunks()).unwrap();
-        store.add_document("b.txt", &sample_chunks()).unwrap();
+        store
+            .add_document("a.txt", 1, "h", &sample_chunks())
+            .unwrap();
+        store
+            .add_document("b.txt", 1, "h", &sample_chunks())
+            .unwrap();
 
         assert!(store.delete_document("a.txt").unwrap());
         assert_eq!(store.document_count().unwrap(), 1);
@@ -539,10 +625,15 @@ mod tests {
         let mut store = SqliteVectorStore::open_in_memory().unwrap();
         store.init().unwrap();
         store
-            .add_document("old.txt", &[chunk(0, "old model", vec![1.0, 0.0])])
+            .add_document("old.txt", 1, "h", &[chunk(0, "old model", vec![1.0, 0.0])])
             .unwrap();
         store
-            .add_document("new.txt", &[chunk(0, "new model", vec![1.0, 0.0, 0.0])])
+            .add_document(
+                "new.txt",
+                1,
+                "h",
+                &[chunk(0, "new model", vec![1.0, 0.0, 0.0])],
+            )
             .unwrap();
 
         let results = store.search(&[1.0, 0.0, 0.0], 5).unwrap();

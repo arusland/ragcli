@@ -7,7 +7,7 @@ mod store;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 
 use config::Config;
@@ -153,10 +153,31 @@ fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
+    let source_path = doc_path.to_string_lossy();
+    let bytes = match std::fs::read(doc_path)
+        .with_context(|| format!("failed to read {}", doc_path.display()))
+    {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            store.set_document_error(&source_path, &format!("{err:#}"))?;
+            return Err(err);
+        }
+    };
+    let size = bytes.len() as u64;
+    let hash = format!("{:x}", md5::compute(&bytes));
+
+    if store.document_fingerprint(&source_path)? == Some((size, hash.clone())) {
+        println!(
+            "Skipped {}: already added and unchanged (size {size} bytes, md5 {hash})",
+            doc_path.display()
+        );
+        return Ok(());
+    }
+
     let text = match parser::parser_for(doc_path).and_then(|p| p.parse(doc_path)) {
         Ok(text) => text,
         Err(err) => {
-            store.set_document_error(&doc_path.to_string_lossy(), &format!("{err:#}"))?;
+            store.set_document_error(&source_path, &format!("{err:#}"))?;
             return Err(err);
         }
     };
@@ -188,7 +209,7 @@ fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
         })
         .collect();
 
-    store.add_document(&doc_path.to_string_lossy(), &embedded)?;
+    store.add_document(&source_path, size, &hash, &embedded)?;
 
     println!(
         "Added {}: {} chunk(s), dim {}",
