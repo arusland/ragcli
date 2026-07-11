@@ -29,6 +29,12 @@ $env:OLLAMA_URL = "http://localhost:11434"
 cargo run -- add .\notes.txt
 # Added .\notes.txt: 3 chunk(s), dim 768
 
+# Add every supported document in a folder, recursively
+cargo run -- add .\docs
+# Added .\docs\a.txt: 1 chunk(s), dim 768
+# Added .\docs\sub\b.md: 1 chunk(s), dim 768
+# Folder .\docs: 2 added, 0 unchanged, 0 failed
+
 # Answer a question using the stored documents as context
 cargo run -- ask "What do my notes say about brewing?"
 # <answer from the chat model>
@@ -71,6 +77,8 @@ Options:
 - `--verbose` / `-v` — print diagnostics to stderr: the retrieved chunks with their similarity scores and the raw request/response of the `/api/chat` call; stdout (answer + sources) is unaffected
 
 Re-running `add` on the same file replaces its previously stored chunks, so the command is idempotent.
+
+When `add` is given a folder it scans it recursively, adding every file a parser supports and skipping hidden entries (names starting with `.`, e.g. `.git`) and unsupported files. Per-file failures are reported but don't stop the run; a summary line and a non-zero exit code follow if anything failed.
 
 ### Supported document types
 

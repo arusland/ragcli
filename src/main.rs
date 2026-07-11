@@ -39,9 +39,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Parse a document, embed it, and store its vectors
+    /// Parse a document (or every document in a folder), embed it, and store its vectors
     Add {
-        /// Path to the document to add
+        /// Path to the document or folder to add; folders are scanned recursively
         path: PathBuf,
     },
     /// Answer a question using the stored documents as context
@@ -72,7 +72,7 @@ const RECENT_DOCUMENTS: usize = 5;
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Add { path } => add_document(&cli.db, &path, cli.verbose),
+        Command::Add { path } => add_command(&cli.db, &path, cli.verbose),
         Command::Ask { question, top_k } => ask_question(&cli.db, &question, top_k, cli.verbose),
         Command::Status => show_status(&cli.db),
         Command::Doc { term, rm, force } => doc_command(&cli.db, &term, rm, force),
@@ -170,12 +170,82 @@ fn normalize_source_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
+fn add_command(db_path: &Path, path: &Path, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
+    let path = normalize_source_path(path)?;
+    if !path.is_dir() {
+        return add_document(&mut store, &config, &path, verbose).map(|_| ());
+    }
+
+    let files = collect_documents(&path)?;
+    if files.is_empty() {
+        bail!("no supported documents found in {}", path.display());
+    }
+    let mut added = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
+    for file in &files {
+        match add_document(&mut store, &config, file, verbose) {
+            Ok(AddOutcome::Added) => added += 1,
+            Ok(AddOutcome::SkippedUnchanged) => skipped += 1,
+            Err(err) => {
+                eprintln!("Failed {}: {err:#}", file.display());
+                failed += 1;
+            }
+        }
+    }
+    println!(
+        "Folder {}: {added} added, {skipped} unchanged, {failed} failed",
+        path.display()
+    );
+    if failed > 0 {
+        bail!("{failed} document(s) failed to add");
+    }
+    Ok(())
+}
+
+/// All supported document files under `dir`, recursively, in sorted order.
+/// Hidden files and directories (leading '.', e.g. `.git`) are skipped, as are
+/// files no registered parser supports.
+fn collect_documents(dir: &Path) -> Result<Vec<PathBuf>> {
+    fn walk(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        let entries = std::fs::read_dir(dir)
+            .with_context(|| format!("failed to read directory {}", dir.display()))?;
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, files)?;
+            } else if parser::parser_for(&path).is_ok() {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+enum AddOutcome {
+    Added,
+    SkippedUnchanged,
+}
+
+fn add_document(
+    store: &mut SqliteVectorStore,
+    config: &Config,
+    doc_path: &Path,
+    verbose: bool,
+) -> Result<AddOutcome> {
     let doc_path = &normalize_source_path(doc_path)?;
     let source_path = doc_path.to_string_lossy();
     let bytes = match std::fs::read(doc_path)
@@ -195,7 +265,7 @@ fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
             "Skipped {}: already added and unchanged (size {size} bytes, md5 {hash})",
             doc_path.display()
         );
-        return Ok(());
+        return Ok(AddOutcome::SkippedUnchanged);
     }
 
     let text = match parser::parser_for(doc_path).and_then(|p| p.parse(doc_path)) {
@@ -241,7 +311,7 @@ fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
         embedded.len(),
         dim
     );
-    Ok(())
+    Ok(AddOutcome::Added)
 }
 
 fn ask_question(db_path: &Path, question: &str, top_k: usize, verbose: bool) -> Result<()> {
@@ -351,6 +421,21 @@ mod tests {
             normalized,
             std::env::current_dir().unwrap().join("missing.txt")
         );
+    }
+
+    #[test]
+    fn collect_documents_walks_recursively_skipping_hidden_and_unsupported() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("sub/.hidden-dir")).unwrap();
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        std::fs::write(root.join("sub/a.md"), "a").unwrap();
+        std::fs::write(root.join("sub/.hidden.txt"), "hidden").unwrap();
+        std::fs::write(root.join("sub/.hidden-dir/c.txt"), "c").unwrap();
+        std::fs::write(root.join("image.png"), "not a document").unwrap();
+
+        let files = collect_documents(root).unwrap();
+        assert_eq!(files, vec![root.join("b.txt"), root.join("sub/a.md")]);
     }
 
     #[test]
