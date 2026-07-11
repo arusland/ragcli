@@ -90,10 +90,16 @@ fn doc_command(db_path: &Path, term: &str, rm: bool, force: bool) -> Result<()> 
         return Ok(());
     }
     for doc in &docs {
-        println!(
-            "{}  {} ({} chunk(s))",
-            doc.added_at, doc.source_path, doc.chunk_count
-        );
+        match &doc.error {
+            Some(error) => println!(
+                "{}  {} ({} chunk(s), error: {})",
+                doc.added_at, doc.source_path, doc.chunk_count, error
+            ),
+            None => println!(
+                "{}  {} ({} chunk(s))",
+                doc.added_at, doc.source_path, doc.chunk_count
+            ),
+        }
     }
 
     if rm {
@@ -144,7 +150,16 @@ fn show_status(db_path: &Path) -> Result<()> {
 fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
 
-    let text = parser::parser_for(doc_path)?.parse(doc_path)?;
+    let mut store = SqliteVectorStore::open(db_path)?;
+    store.init()?;
+
+    let text = match parser::parser_for(doc_path).and_then(|p| p.parse(doc_path)) {
+        Ok(text) => text,
+        Err(err) => {
+            store.set_document_error(&doc_path.to_string_lossy(), &format!("{err:#}"))?;
+            return Err(err);
+        }
+    };
     let chunks = chunker::chunk_text(&text, CHUNK_SIZE, CHUNK_OVERLAP);
     if chunks.is_empty() {
         bail!("document {} contains no text", doc_path.display());
@@ -173,8 +188,6 @@ fn add_document(db_path: &Path, doc_path: &Path, verbose: bool) -> Result<()> {
         })
         .collect();
 
-    let mut store = SqliteVectorStore::open(db_path)?;
-    store.init()?;
     store.add_document(&doc_path.to_string_lossy(), &embedded)?;
 
     println!(

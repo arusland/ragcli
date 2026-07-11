@@ -25,6 +25,8 @@ pub struct StoredDocument {
     pub chunk_count: usize,
     /// When the document was (last) added, in the machine's local time zone.
     pub added_at: String,
+    /// The parse error from the last failed `add`, if any.
+    pub error: Option<String>,
 }
 
 /// Storage backend for document embeddings. The default implementation is
@@ -35,8 +37,13 @@ pub trait VectorStore {
     fn init(&mut self) -> Result<()>;
 
     /// Upserts a document and its chunk embeddings. Chunks previously stored
-    /// for the same `source_path` are replaced.
+    /// for the same `source_path` are replaced, and any recorded parse error
+    /// is cleared.
     fn add_document(&mut self, source_path: &str, chunks: &[EmbeddedChunk]) -> Result<()>;
+
+    /// Upserts a document and records the error that prevented it from being
+    /// parsed. Chunks from an earlier successful add are kept.
+    fn set_document_error(&mut self, source_path: &str, error: &str) -> Result<()>;
 
     /// Returns up to `top_k` stored chunks most similar to `query` by cosine
     /// similarity, best match first. Empty if the store has no chunks.

@@ -50,7 +50,8 @@ impl VectorStore for SqliteVectorStore {
                 "CREATE TABLE IF NOT EXISTS documents (
                      id INTEGER PRIMARY KEY,
                      source_path TEXT NOT NULL UNIQUE,
-                     added_at TEXT NOT NULL DEFAULT (datetime('now'))
+                     added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                     error TEXT
                  );
                  CREATE TABLE IF NOT EXISTS chunks (
                      id INTEGER PRIMARY KEY,
@@ -61,7 +62,8 @@ impl VectorStore for SqliteVectorStore {
                      dim INTEGER NOT NULL
                  );",
             )
-            .context("failed to create database schema")
+            .context("failed to create database schema")?;
+        Ok(())
     }
 
     fn add_document(&mut self, source_path: &str, chunks: &[EmbeddedChunk]) -> Result<()> {
@@ -69,7 +71,7 @@ impl VectorStore for SqliteVectorStore {
 
         tx.execute(
             "INSERT INTO documents (source_path) VALUES (?1)
-             ON CONFLICT(source_path) DO UPDATE SET added_at = datetime('now')",
+             ON CONFLICT(source_path) DO UPDATE SET added_at = datetime('now'), error = NULL",
             params![source_path],
         )?;
         let document_id: i64 = tx.query_row(
@@ -99,6 +101,18 @@ impl VectorStore for SqliteVectorStore {
         drop(insert);
 
         tx.commit().context("failed to commit document")
+    }
+
+    fn set_document_error(&mut self, source_path: &str, error: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO documents (source_path, error) VALUES (?1, ?2)
+                 ON CONFLICT(source_path) DO UPDATE
+                 SET added_at = datetime('now'), error = excluded.error",
+                params![source_path, error],
+            )
+            .with_context(|| format!("failed to record error for document {source_path}"))?;
+        Ok(())
     }
 
     fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchResult>> {
@@ -157,7 +171,7 @@ impl VectorStore for SqliteVectorStore {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id)
+                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id), d.error
                  FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
                  GROUP BY d.id
                  ORDER BY d.added_at DESC, d.id DESC
@@ -171,6 +185,7 @@ impl VectorStore for SqliteVectorStore {
                     source_path: row.get(0)?,
                     added_at: row.get(1)?,
                     chunk_count: row.get::<_, i64>(2)? as usize,
+                    error: row.get(3)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -181,7 +196,7 @@ impl VectorStore for SqliteVectorStore {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id)
+                "SELECT d.source_path, datetime(d.added_at, 'localtime'), count(c.id), d.error
                  FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
                  WHERE d.source_path LIKE '%' || ?1 || '%' ESCAPE '\\'
                  GROUP BY d.id
@@ -195,6 +210,7 @@ impl VectorStore for SqliteVectorStore {
                     source_path: row.get(0)?,
                     added_at: row.get(1)?,
                     chunk_count: row.get::<_, i64>(2)? as usize,
+                    error: row.get(3)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -440,6 +456,63 @@ mod tests {
 
         let docs = store.find_documents("100_").unwrap();
         assert!(docs.is_empty());
+    }
+
+    #[test]
+    fn set_document_error_is_reported_and_cleared_by_successful_add() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+
+        store
+            .set_document_error("broken.pdf", "failed to extract text")
+            .unwrap();
+        let docs = store.find_documents("broken").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].error.as_deref(), Some("failed to extract text"));
+        assert_eq!(docs[0].chunk_count, 0);
+
+        store.add_document("broken.pdf", &sample_chunks()).unwrap();
+        let docs = store.find_documents("broken").unwrap();
+        assert_eq!(docs[0].error, None);
+        assert_eq!(docs[0].chunk_count, 2);
+    }
+
+    #[test]
+    fn set_document_error_keeps_chunks_of_earlier_successful_add() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store.add_document("doc.txt", &sample_chunks()).unwrap();
+
+        store.set_document_error("doc.txt", "boom").unwrap();
+        assert_eq!(store.document_count().unwrap(), 1);
+        let docs = store.find_documents("doc.txt").unwrap();
+        assert_eq!(docs[0].error.as_deref(), Some("boom"));
+        assert_eq!(docs[0].chunk_count, 2);
+    }
+
+    #[test]
+    fn init_adds_error_column_to_pre_existing_schema() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        // schema from before the error column existed
+        store
+            .conn
+            .execute_batch(
+                "CREATE TABLE documents (
+                     id INTEGER PRIMARY KEY,
+                     source_path TEXT NOT NULL UNIQUE,
+                     added_at TEXT NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO documents (source_path) VALUES ('old.txt');",
+            )
+            .unwrap();
+
+        store.init().unwrap();
+        // idempotent: a second init must not fail on the existing column
+        store.init().unwrap();
+
+        store.set_document_error("old.txt", "boom").unwrap();
+        let docs = store.find_documents("old.txt").unwrap();
+        assert_eq!(docs[0].error.as_deref(), Some("boom"));
     }
 
     #[test]
