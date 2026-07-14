@@ -1,7 +1,13 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use super::EmbeddingProvider;
+
+/// Batched embedding requests can take a while for large chunk sets; the
+/// default 30s client timeout is too aggressive.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct OllamaEmbedder {
     client: reqwest::blocking::Client,
@@ -27,8 +33,12 @@ struct ErrorResponse {
 
 impl OllamaEmbedder {
     pub fn new(base_url: &str, model: &str) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("failed to build HTTP client");
         Self {
-            client: reqwest::blocking::Client::new(),
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
         }
