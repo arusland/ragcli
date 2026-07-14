@@ -172,13 +172,16 @@ fn normalize_source_path(path: &Path) -> Result<PathBuf> {
 
 fn add_command(db_path: &Path, path: &Path, verbose: bool) -> Result<()> {
     let config = Config::from_env()?;
+    let start = std::time::Instant::now();
 
     let mut store = SqliteVectorStore::open(db_path)?;
     store.init()?;
 
     let path = normalize_source_path(path)?;
     if !path.is_dir() {
-        return add_document(&mut store, &config, &path, verbose).map(|_| ());
+        let result = add_document(&mut store, &config, &path, verbose).map(|_| ());
+        println!("Total time: {:.2?}", start.elapsed());
+        return result;
     }
 
     let files = collect_documents(&path)?;
@@ -202,6 +205,7 @@ fn add_command(db_path: &Path, path: &Path, verbose: bool) -> Result<()> {
         "Folder {}: {added} added, {skipped} unchanged, {failed} failed",
         path.display()
     );
+    println!("Total time: {:.2?}", start.elapsed());
     if failed > 0 {
         bail!("{failed} document(s) failed to add");
     }
@@ -246,6 +250,7 @@ fn add_document(
     doc_path: &Path,
     verbose: bool,
 ) -> Result<AddOutcome> {
+    let start = std::time::Instant::now();
     let doc_path = &normalize_source_path(doc_path)?;
     let source_path = doc_path.to_string_lossy();
     let bytes = match std::fs::read(doc_path)
@@ -262,8 +267,9 @@ fn add_document(
 
     if store.document_fingerprint(&source_path)? == Some((size, hash.clone())) {
         println!(
-            "Skipped {}: already added and unchanged (size {size} bytes, md5 {hash})",
-            doc_path.display()
+            "Skipped {}: already added and unchanged (size {size} bytes, md5 {hash}) ({:.2?})",
+            doc_path.display(),
+            start.elapsed()
         );
         return Ok(AddOutcome::SkippedUnchanged);
     }
@@ -306,10 +312,11 @@ fn add_document(
     store.add_document(&source_path, size, &hash, &embedded)?;
 
     println!(
-        "Added {}: {} chunk(s), dim {}",
+        "Added {}: {} chunk(s), dim {} ({:.2?})",
         doc_path.display(),
         embedded.len(),
-        dim
+        dim,
+        start.elapsed()
     );
     Ok(AddOutcome::Added)
 }
