@@ -2,6 +2,7 @@ pub mod docx;
 pub mod excel;
 pub mod pdf;
 pub mod plain_text;
+pub mod xml;
 
 use std::path::Path;
 
@@ -11,6 +12,7 @@ use docx::DocxParser;
 use excel::ExcelParser;
 use pdf::PdfParser;
 use plain_text::PlainTextParser;
+use xml::XmlParser;
 
 /// Extracts plain text from a document file. One implementation per document
 /// type (plain text, PDF, Word, Excel now; HTML, ... later).
@@ -24,8 +26,13 @@ pub trait DocumentParser {
 
 // PlainTextParser claims extensionless files, so it must stay first if a
 // later parser also wants them.
-static PARSERS: &[&(dyn DocumentParser + Sync)] =
-    &[&PlainTextParser, &PdfParser, &DocxParser, &ExcelParser];
+static PARSERS: &[&(dyn DocumentParser + Sync)] = &[
+    &PlainTextParser,
+    &PdfParser,
+    &DocxParser,
+    &ExcelParser,
+    &XmlParser,
+];
 
 /// Returns the first registered parser that supports `path`.
 pub fn parser_for(path: &Path) -> Result<&'static dyn DocumentParser> {
@@ -57,6 +64,11 @@ mod tests {
         assert!(parser_for(Path::new("report.docx")).is_ok());
         assert!(parser_for(Path::new("data.xlsx")).is_ok());
         assert!(parser_for(Path::new("legacy.xls")).is_ok());
+    }
+
+    #[test]
+    fn selects_xml_parser_for_xml_files() {
+        assert!(parser_for(Path::new("data.xml")).is_ok());
     }
 
     #[test]
