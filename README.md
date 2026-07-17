@@ -89,6 +89,7 @@ When `add` is given a folder it scans it recursively, adding every file a parser
 | `DocxParser` | `.docx` (Word 2007+; legacy binary `.doc` is not supported) |
 | `ExcelParser` | `.xlsx`, `.xlsm`, `.xlsb`, `.xls` (each sheet becomes tab-separated rows under a `Sheet: <name>` heading) |
 | `XmlParser` | `.xml` (tags stripped, text content only) |
+| `CodeParser` | Source files, read verbatim as text: `.java`, `.kt`, `.kts`, `.groovy`, `.gradle`, `.scala`, `.clj`, `.py`, `.rb`, `.pl`, `.php`, `.lua`, `.r`, `.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.psm1`, `.bat`, `.cmd`, `.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, `.cs`, `.m`, `.mm`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.css`, `.scss`, `.sass`, `.less`, `.rs`, `.go`, `.swift`, `.sql`, `.toml`, `.yaml`, `.yml`, `.json`, `.ini`, `.cfg`, `.properties` |
 
 Other file types are rejected with `unsupported document type`.
 

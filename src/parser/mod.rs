@@ -1,3 +1,4 @@
+pub mod code;
 pub mod docx;
 pub mod excel;
 pub mod pdf;
@@ -8,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use code::CodeParser;
 use docx::DocxParser;
 use excel::ExcelParser;
 use pdf::PdfParser;
@@ -32,6 +34,7 @@ static PARSERS: &[&(dyn DocumentParser + Sync)] = &[
     &DocxParser,
     &ExcelParser,
     &XmlParser,
+    &CodeParser,
 ];
 
 /// Returns the first registered parser that supports `path`.
@@ -69,6 +72,15 @@ mod tests {
     #[test]
     fn selects_xml_parser_for_xml_files() {
         assert!(parser_for(Path::new("data.xml")).is_ok());
+    }
+
+    #[test]
+    fn selects_code_parser_for_source_files() {
+        assert!(parser_for(Path::new("Main.java")).is_ok());
+        assert!(parser_for(Path::new("script.py")).is_ok());
+        assert!(parser_for(Path::new("build.gradle")).is_ok());
+        assert!(parser_for(Path::new("deploy.sh")).is_ok());
+        assert!(parser_for(Path::new("run.bat")).is_ok());
     }
 
     #[test]
