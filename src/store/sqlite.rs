@@ -53,7 +53,10 @@ impl VectorStore for SqliteVectorStore {
                      added_at TEXT NOT NULL DEFAULT (datetime('now')),
                      error TEXT,
                      size INTEGER,
-                     hash TEXT
+                     hash TEXT,
+                     source TEXT NOT NULL DEFAULT 'original',
+                     parent INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+                     CHECK (source != 'original' OR parent IS NULL)
                  );
                  CREATE TABLE IF NOT EXISTS chunks (
                      id INTEGER PRIMARY KEY,
@@ -618,6 +621,80 @@ mod tests {
 
         assert!(!store.delete_document("unknown.txt").unwrap());
         assert_eq!(store.document_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn add_document_defaults_to_original_with_no_parent() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store
+            .add_document("doc.txt", 1, "h", &sample_chunks())
+            .unwrap();
+
+        let (source, parent): (String, Option<i64>) = store
+            .conn
+            .query_row(
+                "SELECT source, parent FROM documents WHERE source_path = 'doc.txt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source, "original");
+        assert_eq!(parent, None);
+    }
+
+    #[test]
+    fn deleting_original_cascades_to_derivative_documents() {
+        let mut store = SqliteVectorStore::open_in_memory().unwrap();
+        store.init().unwrap();
+        store
+            .add_document("original.txt", 1, "h", &sample_chunks())
+            .unwrap();
+        let original_id: i64 = store
+            .conn
+            .query_row(
+                "SELECT id FROM documents WHERE source_path = 'original.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        store
+            .conn
+            .execute(
+                "INSERT INTO documents (source_path, source, parent) VALUES (?1, 'generated', ?2)",
+                params!["derived.txt", original_id],
+            )
+            .unwrap();
+        let derived_id: i64 = store
+            .conn
+            .query_row(
+                "SELECT id FROM documents WHERE source_path = 'derived.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO chunks (document_id, chunk_index, content, embedding, dim)
+                 VALUES (?1, 0, 'derived chunk', ?2, 1)",
+                params![derived_id, embedding_to_bytes(&[1.0])],
+            )
+            .unwrap();
+
+        assert!(store.delete_document("original.txt").unwrap());
+
+        let remaining_docs: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM documents", [], |row| row.get(0))
+            .unwrap();
+        let remaining_chunks: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining_docs, 0);
+        assert_eq!(remaining_chunks, 0);
     }
 
     #[test]
